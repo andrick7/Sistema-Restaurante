@@ -1,0 +1,504 @@
+\documentclass[11pt,letterpaper]{article}
+
+% ---------- Paquetes ----------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-tabla]{babel}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,shapes.geometric,fit,calc}
+\usepackage{fancyhdr}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+
+% ---------- Colores y estilos ----------
+\definecolor{azulprincipal}{RGB}{31,78,121}
+\definecolor{grisclaro}{RGB}{242,242,242}
+\definecolor{verdecodigo}{RGB}{0,110,60}
+
+\lstdefinestyle{codigo}{
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{grisclaro},
+  frame=single,
+  rulecolor=\color{azulprincipal},
+  breaklines=true,
+  keywordstyle=\color{azulprincipal}\bfseries,
+  commentstyle=\color{verdecodigo}\itshape,
+  stringstyle=\color{orange!70!black},
+  showstringspaces=false,
+  tabsize=2
+}
+\lstset{style=codigo}
+
+\newcommand{\tabhead}[1]{\textbf{\color{white}#1}}
+\newcommand{\encabezado}{\rowcolor{azulprincipal}}
+\usepackage{colortbl}
+\renewcommand{\arraystretch}{1.25}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small Automatización de Restaurantes por Voz}
+\fancyhead[R]{\small \thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\title{\textbf{\color{azulprincipal}Sistema de Automatización de Órdenes\\para Restaurantes mediante Voz e IoT}\\[0.4em]
+\large Documento de diseño y propuesta técnica}
+\author{Andrick Millan Bernal\\ \small Universidad Iberoamericana Ciudad de México}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{fancy}
+
+\begin{abstract}
+Este documento presenta el diseño de un sistema de automatización de restaurantes en el que los meseros utilizan un micrófono (dispositivo IoT) para repetir en voz alta la orden del cliente. El audio se transcribe, se interpreta y se envía a un servidor (local o en la nube) que registra el pedido asociado a un número de mesa, lo muestra en tiempo real en una interfaz web (cocina, barra y caja) y genera un ticket virtual. El objetivo principal es \textbf{agilizar la toma y el flujo de órdenes}, reduciendo errores y tiempos de espera.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% =====================================================
+\section{Introducción y problemática}
+% =====================================================
+En muchos restaurantes la toma de órdenes sigue siendo manual: el mesero escribe en una libreta, camina hasta la cocina y entrega el papel o lo captura en una terminal. Esto genera:
+
+\begin{itemize}[noitemsep]
+  \item Tiempos muertos entre que el cliente ordena y la cocina recibe el pedido.
+  \item Errores de interpretación (letra ilegible, platillos omitidos, mesa equivocada).
+  \item Pérdida de comandas y dificultad para dar seguimiento al estado del pedido.
+  \item Cuentas lentas por la captura manual del ticket final.
+\end{itemize}
+
+La solución propuesta elimina el traslado y la captura manual: el mesero únicamente \textbf{dicta la orden} mientras el cliente la realiza y el sistema se encarga del resto.
+
+% =====================================================
+\section{Objetivos}
+% =====================================================
+\subsection{Objetivo general}
+Diseñar e implementar un sistema que, a partir de la voz del mesero, registre automáticamente órdenes por mesa, las muestre en una interfaz en tiempo real y genere tickets virtuales, agilizando la operación del restaurante.
+
+\subsection{Objetivos específicos}
+\begin{itemize}[noitemsep]
+  \item Capturar la voz del mesero mediante un micrófono conectado a un dispositivo IoT.
+  \item Transcribir e interpretar la orden (mesa, platillos, cantidades y notas).
+  \item Identificar cada mesa con un número único y asociarle sus pedidos.
+  \item Mostrar las órdenes en tiempo real en una UI web para cocina, barra y caja.
+  \item Generar y almacenar un ticket virtual por mesa, con subtotal, impuestos y total.
+  \item Operar sobre un servidor local o en la nube según las necesidades del negocio.
+\end{itemize}
+
+% =====================================================
+\section{Alcance}
+% =====================================================
+\begin{table}[h!]
+\centering
+\begin{tabularx}{\textwidth}{>{\bfseries}l X}
+\toprule
+\encabezado \tabhead{Dentro del alcance} & \tabhead{Fuera del alcance (primera versión)} \\
+\midrule
+Dictado de órdenes por voz & Pagos electrónicos integrados (terminal bancaria) \\
+Numeración de mesas y control de estado & Reservaciones en línea para clientes \\
+UI web para cocina, barra y caja & Facturación electrónica (CFDI) \\
+Ticket virtual por mesa & Control completo de inventarios \\
+Panel de administración del menú & Aplicación móvil nativa para clientes \\
+\bottomrule
+\end{tabularx}
+\caption{Alcance del proyecto.}
+\end{table}
+
+% =====================================================
+\section{Descripción general del sistema}
+% =====================================================
+\subsection{Flujo de operación}
+\begin{enumerate}[noitemsep]
+  \item El cliente realiza su pedido al mesero.
+  \item El mesero presiona el botón del micrófono, indica el \textbf{número de mesa} y repite la orden.
+  \item El dispositivo IoT captura el audio y lo envía al servidor.
+  \item El servidor transcribe la voz a texto (\textit{Speech-to-Text}).
+  \item El analizador de órdenes (\textit{parser}/NLP) extrae mesa, platillos, cantidades y notas, y los valida contra el menú.
+  \item La orden se guarda en la base de datos y se emite en tiempo real mediante WebSockets.
+  \item La UI muestra la comanda en cocina/barra y actualiza el ticket virtual de la mesa.
+  \item Cocina cambia el estado (\textit{En preparación} $\rightarrow$ \textit{Lista}) y el mesero es notificado.
+  \item Al cerrar la mesa, caja cierra el ticket y se registra el pago.
+\end{enumerate}
+
+\subsection{Ejemplo de dictado}
+\begin{quote}
+\textit{``Mesa cuatro: dos tacos al pastor, una orden de guacamole, un agua de horchata y una cerveza sin hielo.''}
+\end{quote}
+
+\subsection{Arquitectura general}
+
+\begin{figure}[h!]
+\centering
+\begin{tikzpicture}[
+  node distance=1.0cm and 1.2cm,
+  caja/.style={rectangle, rounded corners, draw=azulprincipal, fill=azulprincipal!10, thick, minimum height=1.1cm, minimum width=2.6cm, align=center, font=\small},
+  flecha/.style={-{Stealth[length=2.5mm]}, thick, azulprincipal}
+]
+\node[caja] (mesero) {Mesero\\ \scriptsize(micrófono)};
+\node[caja, right=of mesero] (iot) {Dispositivo IoT\\ \scriptsize(ESP32 / Raspberry Pi)};
+\node[caja, right=of iot] (stt) {Servicio STT\\ \scriptsize(voz a texto)};
+
+\node[caja, below=of stt] (parser) {Parser de órdenes\\ \scriptsize(NLP + menú)};
+\node[caja, left=of parser] (api) {API REST\\ \scriptsize + WebSocket};
+\node[caja, left=of api] (db) {Base de datos\\ \scriptsize(PostgreSQL)};
+
+\node[caja, below=of api] (front) {Frontend web\\ \scriptsize(React)};
+\node[caja, left=of front] (cocina) {Pantalla de\\cocina / barra};
+\node[caja, right=of front] (ticket) {Ticket virtual\\ \scriptsize(caja)};
+
+\draw[flecha] (mesero) -- (iot);
+\draw[flecha] (iot) -- node[above, font=\scriptsize]{MQTT/HTTP} (stt);
+\draw[flecha] (stt) -- (parser);
+\draw[flecha] (parser) -- (api);
+\draw[flecha] (api) -- (db);
+\draw[flecha] (api) -- (front);
+\draw[flecha] (front) -- (cocina);
+\draw[flecha] (front) -- (ticket);
+\end{tikzpicture}
+\caption{Arquitectura general del sistema.}
+\end{figure}
+
+% =====================================================
+\section{Requerimientos}
+% =====================================================
+\subsection{Requerimientos funcionales}
+\begin{longtable}{@{}>{\bfseries}p{1.4cm} p{9cm} p{2.4cm}@{}}
+\toprule
+\encabezado \tabhead{ID} & \tabhead{Descripción} & \tabhead{Prioridad} \\
+\midrule
+\endhead
+RF-01 & El sistema debe capturar audio desde un micrófono del mesero y enviarlo al servidor. & Alta \\
+RF-02 & El sistema debe transcribir el audio a texto en español. & Alta \\
+RF-03 & El sistema debe identificar el número de mesa mencionado en la orden. & Alta \\
+RF-04 & El sistema debe reconocer platillos y cantidades y validarlos contra el menú registrado. & Alta \\
+RF-05 & El sistema debe permitir al mesero confirmar o corregir la orden interpretada antes de enviarla. & Alta \\
+RF-06 & La UI debe mostrar las órdenes en tiempo real, separadas por área (cocina/barra). & Alta \\
+RF-07 & Cada mesa debe tener un ticket virtual que se actualice con cada nuevo pedido. & Alta \\
+RF-08 & Cocina debe poder cambiar el estado de cada platillo (pendiente, preparando, listo, entregado). & Media \\
+RF-09 & El sistema debe permitir cerrar la cuenta de una mesa y registrar el método de pago. & Media \\
+RF-10 & El administrador debe poder crear, editar y desactivar platillos y precios. & Media \\
+RF-11 & El sistema debe conservar un historial de tickets y órdenes. & Baja \\
+\bottomrule
+\end{longtable}
+
+\subsection{Requerimientos no funcionales}
+\begin{table}[h!]
+\centering
+\begin{tabularx}{\textwidth}{>{\bfseries}l X}
+\toprule
+\encabezado \tabhead{Atributo} & \tabhead{Descripción} \\
+\midrule
+Rendimiento & Latencia total (fin del dictado a visualización en pantalla) menor a 3 segundos. \\
+Disponibilidad & Operación local ante falta de Internet (modo \textit{offline-first} con servidor local). \\
+Precisión & Reconocimiento de órdenes igual o superior al 90\% con confirmación del mesero. \\
+Seguridad & Autenticación por roles, comunicación cifrada (TLS) y dispositivos IoT autenticados. \\
+Usabilidad & Interfaz clara, botones grandes y uso con una sola mano. \\
+Escalabilidad & Soporte para múltiples meseros, mesas y sucursales. \\
+\bottomrule
+\end{tabularx}
+\caption{Requerimientos no funcionales.}
+\end{table}
+
+% =====================================================
+\section{Componentes del sistema}
+% =====================================================
+\subsection{Capa IoT (captura de voz)}
+Cada mesero porta un dispositivo con micrófono y un botón \textit{push-to-talk}. El dispositivo graba el audio mientras el botón está presionado y lo envía al servidor.
+
+\begin{table}[h!]
+\centering
+\begin{tabularx}{\textwidth}{l X X}
+\toprule
+\encabezado \tabhead{Opción} & \tabhead{Ventajas} & \tabhead{Desventajas} \\
+\midrule
+ESP32 + micrófono I2S (INMP441) & Muy económico, bajo consumo, Wi-Fi integrado & Procesamiento limitado; requiere STT externo \\
+Raspberry Pi + micrófono USB & Mayor capacidad, permite STT local & Mayor costo y consumo \\
+Teléfono / tablet con la web app & Sin hardware adicional & Menos ergonómico; depende del dispositivo del mesero \\
+\bottomrule
+\end{tabularx}
+\caption{Opciones de hardware para la captura de voz.}
+\end{table}
+
+\subsection{Procesamiento de voz y de órdenes}
+\begin{itemize}[noitemsep]
+  \item \textbf{Speech-to-Text:} Whisper (local o API), Google Speech-to-Text o Vosk (offline).
+  \item \textbf{Parser de órdenes:} reglas y expresiones regulares para número de mesa y cantidades, más coincidencia aproximada (\textit{fuzzy matching}) contra el menú. Opcionalmente un modelo de lenguaje para casos ambiguos.
+  \item \textbf{Confirmación:} la orden interpretada se muestra al mesero (pantalla o aplicación) antes de enviarse a cocina.
+\end{itemize}
+
+\subsection{Backend}
+\begin{table}[h!]
+\centering
+\begin{tabularx}{\textwidth}{l X}
+\toprule
+\encabezado \tabhead{Elemento} & \tabhead{Propuesta} \\
+\midrule
+Lenguaje / framework & Node.js (Express o NestJS) o Python (FastAPI) \\
+Comunicación IoT & MQTT (Mosquitto) o HTTP/HTTPS \\
+Tiempo real & WebSockets (Socket.IO) \\
+Base de datos & PostgreSQL (alternativa: MongoDB) \\
+Autenticación & JWT con roles (mesero, cocina, caja, administrador) \\
+Despliegue & Servidor local (mini-PC / Raspberry Pi) o nube (AWS, Azure, Render) con Docker \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías del backend.}
+\end{table}
+
+\subsection{Frontend (UI)}
+Aplicación web responsiva (React, Vue o similar) con las siguientes vistas:
+
+\begin{table}[h!]
+\centering
+\begin{tabularx}{\textwidth}{l X}
+\toprule
+\encabezado \tabhead{Vista} & \tabhead{Función} \\
+\midrule
+Mapa de mesas & Muestra todas las mesas numeradas y su estado (libre, ocupada, cuenta solicitada). \\
+Cocina / Barra & Tablero tipo Kanban con comandas nuevas, en preparación y listas. \\
+Ticket de mesa & Detalle de platillos, cantidades, notas, subtotal, impuestos y total. \\
+Caja & Cierre de cuenta, método de pago e historial. \\
+Administración & Gestión de menú, precios, mesas y usuarios. \\
+\bottomrule
+\end{tabularx}
+\caption{Vistas de la interfaz.}
+\end{table}
+
+% =====================================================
+\section{Identificación de mesas y ticket virtual}
+% =====================================================
+Cada mesa se registra con un \textbf{número único} (por ejemplo 1 a $N$). Al dictarse una orden, el número de mesa se usa como llave para abrir (o actualizar) el ticket asociado. Mientras la mesa esté ocupada existe un único ticket \textit{abierto}; al cerrar la cuenta pasa a estado \textit{cerrado}.
+
+\subsection{Estados de una mesa}
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}lp{9cm}@{}}
+\toprule
+\encabezado \tabhead{Estado} & \tabhead{Descripción} \\
+\midrule
+Libre & Sin ticket abierto. \\
+Ocupada & Ticket abierto con pedidos activos. \\
+Cuenta solicitada & El cliente pidió la cuenta; no se admiten nuevos pedidos sin reabrir. \\
+Cerrada & Ticket pagado y archivado. \\
+\bottomrule
+\end{tabular}
+\caption{Estados de las mesas.}
+\end{table}
+
+\subsection{Contenido del ticket virtual}
+\begin{itemize}[noitemsep]
+  \item Folio, fecha y hora de apertura y cierre.
+  \item Número de mesa y mesero responsable.
+  \item Lista de platillos: cantidad, nombre, notas, precio unitario e importe.
+  \item Subtotal, impuestos (IVA), propina sugerida y total.
+  \item Estado de cada platillo y método de pago.
+\end{itemize}
+
+\subsection{Ejemplo de ticket}
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}clrr@{}}
+\multicolumn{4}{c}{\textbf{TICKET \#0001 --- MESA 4}}\\
+\multicolumn{4}{c}{\small Mesero: Juan P. \quad Fecha: 30/10/2026 \quad 16:45}\\
+\toprule
+\encabezado \tabhead{Cant.} & \tabhead{Platillo} & \tabhead{P. Unit.} & \tabhead{Importe} \\
+\midrule
+2 & Tacos al pastor & \$80.00 & \$160.00 \\
+1 & Guacamole & \$95.00 & \$95.00 \\
+1 & Agua de horchata & \$35.00 & \$35.00 \\
+1 & Cerveza (sin hielo) & \$55.00 & \$55.00 \\
+\midrule
+ & & Subtotal & \$345.00 \\
+ & & IVA (16\%) & \$55.20 \\
+ & & \textbf{Total} & \textbf{\$400.20} \\
+\bottomrule
+\end{tabular}
+\caption{Ejemplo ilustrativo de ticket virtual.}
+\end{table}
+
+% =====================================================
+\section{Modelo de datos}
+% =====================================================
+\begin{table}[h!]
+\centering
+\begin{tabularx}{\textwidth}{l X}
+\toprule
+\encabezado \tabhead{Tabla} & \tabhead{Campos principales} \\
+\midrule
+\texttt{mesas} & id, numero, capacidad, estado \\
+\texttt{usuarios} & id, nombre, rol, contrasena\_hash \\
+\texttt{platillos} & id, nombre, categoria, precio, area (cocina/barra), activo \\
+\texttt{tickets} & id, mesa\_id, mesero\_id, estado, abierto\_en, cerrado\_en, subtotal, impuestos, total \\
+\texttt{ordenes} & id, ticket\_id, texto\_original, creada\_en \\
+\texttt{orden\_items} & id, orden\_id, platillo\_id, cantidad, notas, estado \\
+\texttt{pagos} & id, ticket\_id, metodo, monto, fecha \\
+\bottomrule
+\end{tabularx}
+\caption{Entidades de la base de datos.}
+\end{table}
+
+\begin{lstlisting}[language=SQL, caption={Fragmento del esquema SQL (PostgreSQL).}]
+CREATE TABLE mesas (
+  id        SERIAL PRIMARY KEY,
+  numero    INT UNIQUE NOT NULL,
+  capacidad INT DEFAULT 4,
+  estado    VARCHAR(20) DEFAULT 'libre'
+);
+
+CREATE TABLE tickets (
+  id         SERIAL PRIMARY KEY,
+  mesa_id    INT REFERENCES mesas(id),
+  mesero_id  INT REFERENCES usuarios(id),
+  estado     VARCHAR(20) DEFAULT 'abierto',
+  abierto_en TIMESTAMP DEFAULT NOW(),
+  cerrado_en TIMESTAMP,
+  subtotal   NUMERIC(10,2) DEFAULT 0,
+  impuestos  NUMERIC(10,2) DEFAULT 0,
+  total      NUMERIC(10,2) DEFAULT 0
+);
+
+CREATE TABLE orden_items (
+  id          SERIAL PRIMARY KEY,
+  orden_id    INT REFERENCES ordenes(id),
+  platillo_id INT REFERENCES platillos(id),
+  cantidad    INT NOT NULL,
+  notas       TEXT,
+  estado      VARCHAR(20) DEFAULT 'pendiente'
+);
+\end{lstlisting}
+
+% =====================================================
+\section{API del backend}
+% =====================================================
+\begin{table}[h!]
+\centering
+\begin{tabularx}{\textwidth}{l l X}
+\toprule
+\encabezado \tabhead{Método} & \tabhead{Endpoint} & \tabhead{Descripción} \\
+\midrule
+POST & \texttt{/api/voz} & Recibe el audio del dispositivo IoT y devuelve la orden interpretada. \\
+POST & \texttt{/api/ordenes} & Confirma y registra una orden en el ticket de la mesa. \\
+GET & \texttt{/api/mesas} & Lista las mesas y sus estados. \\
+GET & \texttt{/api/tickets/:mesa} & Obtiene el ticket abierto de una mesa. \\
+PATCH & \texttt{/api/items/:id} & Actualiza el estado de un platillo. \\
+POST & \texttt{/api/tickets/:id/cerrar} & Cierra la cuenta y registra el pago. \\
+GET/POST & \texttt{/api/menu} & Consulta y administra el menú. \\
+\bottomrule
+\end{tabularx}
+\caption{Endpoints principales.}
+\end{table}
+
+\begin{lstlisting}[language=Python, caption={Ejemplo simplificado del parser de órdenes (Python).}]
+import re
+
+NUMEROS = {"un": 1, "una": 1, "uno": 1, "dos": 2, "tres": 3,
+           "cuatro": 4, "cinco": 5, "seis": 6}
+
+def interpretar(texto, menu):
+    texto = texto.lower()
+    mesa = re.search(r"mesa\s+(\w+)", texto)
+    num_mesa = NUMEROS.get(mesa.group(1), None) if mesa else None
+    items = []
+    for platillo in menu:
+        if platillo.lower() in texto:
+            items.append({"platillo": platillo, "cantidad": 1})
+    return {"mesa": num_mesa, "items": items}
+\end{lstlisting}
+
+% =====================================================
+\section{Seguridad y roles}
+% =====================================================
+\begin{table}[h!]
+\centering
+\begin{tabularx}{\textwidth}{l X}
+\toprule
+\encabezado \tabhead{Rol} & \tabhead{Permisos} \\
+\midrule
+Mesero & Dictar órdenes, confirmar/corregir, ver sus mesas y tickets. \\
+Cocina / Barra & Ver comandas de su área y cambiar el estado de los platillos. \\
+Caja & Consultar tickets, cerrar cuentas y registrar pagos. \\
+Administrador & Gestionar menú, usuarios, mesas y reportes. \\
+\bottomrule
+\end{tabularx}
+\caption{Roles del sistema.}
+\end{table}
+
+Se recomienda cifrar la comunicación con TLS, autenticar cada dispositivo IoT con credenciales únicas y almacenar contraseñas con \textit{hash} (bcrypt).
+
+% =====================================================
+\section{Servidor local vs. nube}
+% =====================================================
+\begin{table}[h!]
+\centering
+\begin{tabularx}{\textwidth}{l X X}
+\toprule
+\encabezado \tabhead{Criterio} & \tabhead{Servidor local} & \tabhead{Nube} \\
+\midrule
+Latencia & Muy baja (red del restaurante) & Depende de Internet \\
+Disponibilidad sin Internet & Sí & No (requiere conexión) \\
+Costo inicial & Mayor (hardware) & Bajo \\
+Mantenimiento & Responsabilidad del negocio & Gestionado por el proveedor \\
+Multi-sucursal & Más complejo & Sencillo \\
+\bottomrule
+\end{tabularx}
+\caption{Comparativa de despliegue.}
+\end{table}
+
+\noindent\textbf{Recomendación:} iniciar con un servidor local (mini-PC o Raspberry Pi) para garantizar baja latencia y operación sin Internet, con sincronización opcional a la nube para respaldos y reportes.
+
+% =====================================================
+\section{Plan de trabajo}
+% =====================================================
+\begin{table}[h!]
+\centering
+\begin{tabularx}{\textwidth}{l X l}
+\toprule
+\encabezado \tabhead{Fase} & \tabhead{Actividades} & \tabhead{Duración} \\
+\midrule
+1. Análisis & Levantamiento de requerimientos y definición del menú. & 1 semana \\
+2. Diseño & Arquitectura, base de datos y mockups de la UI. & 2 semanas \\
+3. Backend & API, base de datos, WebSockets y parser. & 3 semanas \\
+4. IoT & Prototipo de micrófono y envío de audio. & 2 semanas \\
+5. Frontend & Vistas de mesas, cocina, ticket y administración. & 3 semanas \\
+6. Integración y pruebas & Pruebas de voz, latencia y usabilidad en campo. & 2 semanas \\
+7. Despliegue & Instalación, capacitación y ajustes. & 1 semana \\
+\bottomrule
+\end{tabularx}
+\caption{Cronograma estimado (aprox. 14 semanas).}
+\end{table}
+
+% =====================================================
+\section{Riesgos y mitigación}
+% =====================================================
+\begin{table}[h!]
+\centering
+\begin{tabularx}{\textwidth}{l X}
+\toprule
+\encabezado \tabhead{Riesgo} & \tabhead{Mitigación} \\
+\midrule
+Ruido ambiental afecta el reconocimiento de voz & Micrófonos con cancelación de ruido y modo \textit{push-to-talk}. \\
+Interpretación errónea de platillos & Paso de confirmación del mesero y vocabulario restringido al menú. \\
+Caída de Internet & Servidor local y modo offline. \\
+Resistencia del personal al cambio & Capacitación y periodo de prueba con respaldo manual. \\
+Fallo del dispositivo IoT & Dispositivos de repuesto y alternativa mediante la web app. \\
+\bottomrule
+\end{tabularx}
+\caption{Riesgos identificados.}
+\end{table}
+
+% =====================================================
+\section{Conclusiones}
+% =====================================================
+El sistema propuesto integra IoT, procesamiento de voz, un backend en tiempo real y una interfaz web para reducir el tiempo entre la orden del cliente y la preparación del platillo. La identificación de mesas por número y el ticket virtual permiten un control claro de cada cuenta, disminuyen los errores y facilitan el trabajo de meseros, cocina y caja. La arquitectura modular permite empezar con un prototipo sencillo y escalar progresivamente hacia múltiples sucursales.
+
+\end{document}
